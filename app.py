@@ -7,7 +7,7 @@ import datetime
 # 1. SECURE API KEY ACCESS
 client = Client(api_key=st.secrets["GEMINI_API_KEY"])
 
-# 2. BRANDING YOUR APP
+# 2. BRANDING
 st.set_page_config(page_title="Career-Paths", layout="wide")
 st.title("📡 Career-Paths")
 
@@ -25,21 +25,21 @@ with st.sidebar:
     
     run_button = st.button("Start Scouting")
 
-# 2. Logic Execution
 if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
-    with st.spinner(f"Scouting the live web for a high volume of {role} roles..."):
-        # UPDATED PROMPT: "Fuzzy" volume boost + "No-Guess" link rule
+    with st.spinner(f"Scouting the live web for {role} roles..."):
+        # UPDATED PROMPT: Demanding ATS/Root-Source URLs to prevent broken links
         prompt = (
-            f"Today is {today_date}. Act as a senior technical recruiter. "
-            f"Search the web for AT LEAST 15 active job listings similar to '{role}' in {location}. "
-            f"Treat these keywords as preferred, not mandatory: {keywords}. "
-            f"Target a salary near ${salary:,}+, but include strong technical matches even if salary isn't listed. "
-            "CRITICAL LINK RULE: Use ONLY verified URLs found in search results (e.g., Greenhouse, Lever, LinkedIn, Indeed, ZipRecruiter). "
-            "ABSOLUTELY FORBIDDEN: Do not guess or construct a URL (e.g., do not guess 'company.com/careers/job-title'). "
-            "If you cannot find a direct verified URL for a listing, skip that listing and find another. "
-            "Return a JSON list with: title, company, salary, location, source, link. "
+            f"Today is {today_date}. Act as an elite technical headhunter. "
+            f"Search the web to find AT LEAST 15 distinct, active job postings for '{role}' or related roles in {location}. "
+            f"Keywords: {keywords}. Target salary: ${salary:,}+. "
+            "CRITICAL LINK INSTRUCTION: You must find the ACTUAL, human-viewable application URL. "
+            "Aggregator links (ZipRecruiter, Glassdoor) are often broken or truncated. "
+            "Whenever possible, trace the job back to the root source link (e.g., Greenhouse.io, Lever.co, Workday, or direct company/VC boards like jobs.generalcatalyst.com). "
+            "For example, if you find an 'IT Site Lead at Ramp' role, do not give me a broken ZipRecruiter link; find the real, working root URL. "
+            "NEVER guess, truncate, or hallucinate the URL. Extract the exact working URL directly from the search tool. "
+            "Return the results as a JSON list with exactly these keys: title, company, salary, location, source, link. "
             "Provide ONLY the JSON list."
         )
 
@@ -49,13 +49,11 @@ if run_button:
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.85 # High enough for variety, low enough for focus
+                    'temperature': 0.95 
                 }
             )
             
             raw_text = response.text
-            
-            # Straightforward extraction
             start = raw_text.find("[")
             end = raw_text.rfind("]") + 1
             
@@ -64,12 +62,12 @@ if run_button:
                 job_list = json.loads(json_data)
                 leads = pd.DataFrame(job_list)
 
-                # Standardize columns to lowercase
+                # Standardize column names to lowercase
                 leads.columns = [c.lower() for c in leads.columns]
 
-                st.success(f"Found {len(leads)} potential leads for {today_date}!")
+                st.success(f"Scout complete! Found {len(leads)} leads for {today_date}.")
                 
-                # Interactive Table
+                # Render Table
                 st.data_editor(
                     leads,
                     column_config={
@@ -87,7 +85,7 @@ if run_button:
                 csv = leads.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
             else:
-                st.warning("The scout had trouble finding 100% verified links. Try narrowing the location or adjusting keywords.")
+                st.warning("The scout couldn't format the results properly. Try running the search again.")
                 st.info("Raw response for debugging:")
                 st.write(raw_text)
             
