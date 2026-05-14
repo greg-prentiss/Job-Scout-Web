@@ -11,7 +11,7 @@ client = Client(api_key=st.secrets["GEMINI_API_KEY"])
 st.set_page_config(page_title="Career-Paths", layout="wide")
 st.title("📡 Career-Paths")
 
-# 1. UI Elements
+# UI Elements
 st.title("🔎 AI Job Scout")
 st.markdown("Find your next role using Gemini-powered web scouting.")
 
@@ -29,17 +29,18 @@ with st.sidebar:
 if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
-    with st.spinner(f"Scouting the live web for a wide variety of {role} roles..."):
-        # UPDATED PROMPT: Maximizing volume and forcing direct URLs
+    with st.spinner(f"Scouting the live web for a high volume of {role} roles..."):
+        # UPDATED PROMPT: "Fuzzy" volume boost + "No-Guess" link rule
         prompt = (
-            f"Today is {today_date}. Act as a high-volume career scout. "
-            f"Perform a broad search for active job openings for '{role}' or related senior technical roles in {location}. "
-            f"Keywords like '{keywords}' are preferred but not mandatory—find as many high-quality matches as possible. "
-            f"Target a salary of ${salary:,}+ but do not exclude roles without a listed salary. "
-            "CRITICAL ON LINKS: You MUST provide the direct destination URL (e.g., Greenhouse.io, Lever.co, LinkedIn.com, or company career pages). "
-            "ABSOLUTELY FORBIDDEN: Do not provide 'google.com/ground-api-redirect' or 'vertexaisearch' links. "
-            "Return a JSON list with these keys: title, company, salary, location, source, link. "
-            "Maximize your search to find up to 15 unique leads. Provide ONLY the JSON list."
+            f"Today is {today_date}. Act as a senior technical recruiter. "
+            f"Search the web for AT LEAST 15 active job listings similar to '{role}' in {location}. "
+            f"Treat these keywords as preferred, not mandatory: {keywords}. "
+            f"Target a salary near ${salary:,}+, but include strong technical matches even if salary isn't listed. "
+            "CRITICAL LINK RULE: Use ONLY verified URLs found in search results (e.g., Greenhouse, Lever, LinkedIn, Indeed, ZipRecruiter). "
+            "ABSOLUTELY FORBIDDEN: Do not guess or construct a URL (e.g., do not guess 'company.com/careers/job-title'). "
+            "If you cannot find a direct verified URL for a listing, skip that listing and find another. "
+            "Return a JSON list with: title, company, salary, location, source, link. "
+            "Provide ONLY the JSON list."
         )
 
         try:
@@ -48,13 +49,13 @@ if run_button:
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.9 # Higher temperature for more variety/volume
+                    'temperature': 0.85 # High enough for variety, low enough for focus
                 }
             )
             
             raw_text = response.text
             
-            # Robust JSON extraction
+            # Straightforward extraction
             start = raw_text.find("[")
             end = raw_text.rfind("]") + 1
             
@@ -63,12 +64,12 @@ if run_button:
                 job_list = json.loads(json_data)
                 leads = pd.DataFrame(job_list)
 
-                # Standardize column names
+                # Standardize columns to lowercase
                 leads.columns = [c.lower() for c in leads.columns]
 
                 st.success(f"Found {len(leads)} potential leads for {today_date}!")
                 
-                # Render the table
+                # Interactive Table
                 st.data_editor(
                     leads,
                     column_config={
@@ -86,7 +87,9 @@ if run_button:
                 csv = leads.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
             else:
-                st.warning("No leads found. I've loosened the search—try clicking 'Start Scouting' again.")
+                st.warning("The scout had trouble finding 100% verified links. Try narrowing the location or adjusting keywords.")
+                st.info("Raw response for debugging:")
+                st.write(raw_text)
             
         except Exception as e:
             st.error(f"Scouting Error: {e}")
