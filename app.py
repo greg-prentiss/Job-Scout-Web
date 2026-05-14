@@ -5,12 +5,9 @@ import json
 import datetime
 
 # 1. SECURE API KEY ACCESS
-# This looks for the key in your .streamlit/secrets.toml (locally) 
-# or the Streamlit Cloud Secrets dashboard (once deployed).
 client = Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 # 2. BRANDING YOUR APP
-# Replaces the generic "Streamlit" tab name with your catchy new name.
 st.set_page_config(page_title="Career-Paths", layout="wide")
 st.title("📡 Career-Paths")
 
@@ -30,56 +27,62 @@ with st.sidebar:
 
 # 2. Logic Execution
 if run_button:
-    # Use today's date to force the AI to look for current, active listings
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
     with st.spinner(f"Scouting the live web for {role} roles..."):
-        # Updated prompt with the date and a directive to find "active" roles
+        # UPDATED PROMPT: Demanding direct URLs and allowing "Prioritization" over "Hard Requirements"
         prompt = (
             f"Today is {today_date}. Act as a recruiter in {industry}. "
             f"Search the web to find 10 CURRENTLY OPEN and active {role} roles in {location}. "
-            f"Requirements: {keywords}. Salary expectation: {salary}+. "
-            "Return a JSON list with exactly these keys: title, company, salary, location, source, link. "
-            "Ensure the links are direct to the job posting where possible."
+            f"Prioritize these keywords: {keywords}. Salary target: {salary}+. "
+            "CRITICAL: Do not return 'google.com/ground-api-redirect' URLs. "
+            "Return only the direct destination URL (e.g., Greenhouse, Lever, LinkedIn, Indeed). "
+            "Return a JSON list with exactly these keys: title, company, salary, location, source, link."
         )
 
         try:
-            # Tool-enabled call: This activates the Google Search engine
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt,
                 config={
-                    'tools': [{'google_search': {}}], # Enables live scouting
-                    'temperature': 0.7              # Encourages variety in results
+                    'tools': [{'google_search': {}}],
+                    'temperature': 0.7 
                 }
             )
             
             text_data = response.text
-            
-            # Find the JSON list bounds in the AI response
             start_index = text_data.find("[")
             end_index = text_data.rfind("]") + 1
             
             if start_index != -1 and end_index != 0:
                 clean_json = text_data[start_index:end_index]
-                
-                # Parse the string into a Python list
                 job_list = json.loads(clean_json)
-                
-                # Convert the list into a Pandas DataFrame
                 leads = pd.DataFrame(job_list)
-                
+
+                # Ensure column names are lowercase to match the config below
+                leads.columns = [c.lower() for c in leads.columns]
+
                 st.success(f"Found {len(leads)} potential leads for {today_date}!")
                 
-                # Display the data
-                st.dataframe(leads, width='stretch')
+                # UPDATED UI: Clean clickable buttons
+                st.data_editor(
+                    leads,
+                    column_config={
+                        "link": st.column_config.LinkColumn(
+                            "Job Link",
+                            display_text="Open Posting",
+                            width="medium"
+                        ),
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=leads.columns # Makes it read-only
+                )
                 
-                # Provide a CSV download option
                 csv = leads.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
             else:
-                st.error("The scout returned data in an unexpected format. Try refining your keywords.")
-                st.code(text_data) # Shows raw data for debugging
+                st.error("No valid leads found with current filters. Try removing a keyword or lowering the salary floor.")
             
         except Exception as e:
             st.error(f"Error during scouting: {e}")
