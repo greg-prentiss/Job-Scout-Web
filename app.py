@@ -30,16 +30,15 @@ if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
     with st.spinner(f"Scouting the live web for {role} roles..."):
-        # UPDATED PROMPT: Loosened constraints to allow for related titles and flexible matches
         prompt = (
             f"Today is {today_date}. Act as an expert career scout in {industry}. "
             f"Search the web for approximately 10 active job openings similar to '{role}' in {location}. "
             f"Focus on roles that value these skills: {keywords}. "
-            f"Ideally, target a salary of ${salary:,}+, but include strong matches slightly below this if they fit the profile. "
+            f"Target a salary of ${salary:,}+. "
             "I need direct links to the job postings (like Greenhouse, Lever, LinkedIn, or Company sites). "
-            "Please avoid links that are just 'google.com/ground-api-redirect'. "
-            "Return the results as a raw JSON list with these keys: title, company, salary, location, source, link. "
-            "Provide only the JSON list."
+            "Avoid links that are just '[google.com/ground-api-redirect](https://google.com/ground-api-redirect)'. "
+            "Return a JSON list with these keys: title, company, salary, location, source, link. "
+            "Provide ONLY the JSON list, no other text."
         )
 
         try:
@@ -48,30 +47,27 @@ if run_button:
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.8 # Increased for better variety
+                    'temperature': 0.8 
                 }
             )
             
-            text_data = response.text
-            # Resilient parsing for markdown code blocks
-            if "```json" in text_data:
-                text_data = text_data.split("
-```json")[1].split("```")[0]
+            raw_text = response.text
             
-            start_index = text_data.find("[")
-            end_index = text_data.rfind("]") + 1
+            # THE "STRAIGHTFORWARD" FIX: Find the JSON list without using complex splits
+            start = raw_text.find("[")
+            end = raw_text.rfind("]") + 1
             
-            if start_index != -1 and end_index != 0:
-                clean_json = text_data[start_index:end_index]
-                job_list = json.loads(clean_json)
+            if start != -1 and end != 0:
+                json_data = raw_text[start:end]
+                job_list = json.loads(json_data)
                 leads = pd.DataFrame(job_list)
 
-                # Standardize column names
+                # Standardize column names to lowercase for the UI config
                 leads.columns = [c.lower() for c in leads.columns]
 
-                st.success(f"Found {len(leads)} potential leads for {today_date}!")
+                st.success(f"Found {len(leads)} potential leads!")
                 
-                # Interactive Table
+                # Render the table with clickable buttons
                 st.data_editor(
                     leads,
                     column_config={
@@ -89,9 +85,8 @@ if run_button:
                 csv = leads.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
             else:
-                st.warning("The scout found limited results. Try widening your location or reducing the number of keywords.")
-                st.info("Raw response for debugging:")
-                st.write(text_data)
+                st.warning("No clear leads found. Try broadening your keywords.")
+                st.info("Debugging Info: No JSON list detected in response.")
             
         except Exception as e:
-            st.error(f"Error during scouting: {e}")
+            st.error(f"Scouting Error: {e}")
