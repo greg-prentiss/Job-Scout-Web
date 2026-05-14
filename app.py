@@ -3,7 +3,15 @@ import pandas as pd
 from google.genai import Client
 import json
 
-st.set_page_config(page_title="AI Job Scout", layout="wide")
+# 1. SECURE API KEY ACCESS
+# This looks for the key in your .streamlit/secrets.toml (locally) 
+# or the Streamlit Cloud Secrets dashboard (once deployed).
+client = Client(api_key=st.secrets["GEMINI_API_KEY"])
+
+# 2. BRANDING YOUR APP
+# This replaces the generic "Streamlit" tab name with your new catchy name.
+st.set_page_config(page_title="Career-Paths", layout="wide")
+st.title("📡 Career-Paths")
 
 # 1. UI Elements
 st.title("🔎 AI Job Scout")
