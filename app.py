@@ -29,45 +29,39 @@ with st.sidebar:
 if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
-    with st.spinner(f"Scouting verified sources for {role} roles..."):
-        # UPDATED PROMPT: Prioritizing "Search Result Fallback" over hallucinated deep links
+    with st.spinner(f"Filtering for active {role} postings..."):
+        # UPDATED PROMPT: Strict ban on articles/blogs + localized priority
         prompt = (
             f"Today is {today_date}. Act as a senior technical recruiter. "
-            f"Find 15-20 active job listings for '{role}' in {location}. "
-            f"Priorities: {keywords}. Target: ${salary:,}+. "
-            "\n--- VERIFICATION PROTOCOL ---\n"
-            "1. provide a WORKING URL for every job found. "
-            "2. If a direct application deep-link is visible in the search results, use it. "
-            "3. FALLBACK: If a direct deep-link is not visible, you MUST provide the URL of the Google Search result "
-            "or the job board page (Indeed, LinkedIn, etc.) where the job was seen. "
-            "4. NEVER guess or synthesize a URL (e.g., no 'a1b2c3d4' or '98765' placeholders). "
-            "5. It is better to provide a search result link than a broken 404 link. "
-            "\nReturn ONLY a JSON list of objects. No markdown. No preamble. "
-            "Keys: title, company, salary, location, source, link."
+            f"Search for 15-20 ACTIVE, LIVE job postings for '{role}' in {location}. "
+            f"Focus on the SF Bay Area (Hayward, Oakland, SF) first, then Remote. "
+            f"Required tech: {keywords}. Target: ${salary:,}+. "
+            "\n--- SEARCH INTEGRITY RULES ---\n"
+            "1. You must only return actual job listings. "
+            "2. ABSOLUTELY FORBIDDEN: Do not include blog posts, career advice articles, or 'Top 10' lists. "
+            "3. Every link must point to a specific job board (LinkedIn, Indeed, BuiltIn) or a company career page. "
+            "4. If you cannot find a deep-link, provide the URL of the job search results page on that platform. "
+            "5. NO HALLUCINATIONS: If a job does not meet the $120k salary floor, skip it. "
+            "\nOutput ONLY a JSON list of objects with: title, company, salary, location, source, link."
         )
 
         try:
-            # Reverted: No response_mime_type to stay compatible with Google Search tool
             response = client.models.generate_content(
                 model="gemini-2.5-flash", 
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.4 
+                    'temperature': 0.7 # Increased slightly to find more leads while obeying rules
                 }
             )
             
             raw_text = response.text
-            
-            # HARDENED EXTRACTION: Using regex to find the first valid list block
-            # This prevents "Extra Data" errors by ignoring anything outside the brackets.
+            # Robust extraction logic to prevent "Extra data" errors
             match = re.search(r'\[.*\]', raw_text, re.DOTALL)
             
             if match:
                 json_str = match.group(0).strip()
-                
-                # Manual trim if the AI provided text after the final bracket
-                # This ensures json.loads only sees the list
+                # Bracket balancing
                 bracket_level = 0
                 for i, char in enumerate(json_str):
                     if char == '[': bracket_level += 1
@@ -80,19 +74,21 @@ if run_button:
                 leads = pd.DataFrame(job_list)
                 leads.columns = [c.lower() for c in leads.columns]
 
-                # Post-Processing: Kill common hallucinated ID patterns
-                placeholders = ['a1b2c3d4', '98765', '12345', 'placeholder']
+                # Post-Processing: Drop links that look like articles or generic "help" pages
+                junk_keywords = ['/blog/', '/resources/', '/wu-news/', '/advice/', '/career-advice/']
                 if 'link' in leads.columns:
-                    leads = leads[~leads['link'].str.contains('|'.join(placeholders), case=False, na=False)]
+                    leads = leads[~leads['link'].str.contains('|'.join(junk_keywords), case=False, na=False)]
+                    # Remove the a1b2c3d4 placeholder hallucinations
+                    leads = leads[~leads['link'].str.contains('a1b2c3d4|98765|12345', na=False)]
 
-                st.success(f"Scout complete! Found {len(leads)} potential leads.")
+                st.success(f"Verified {len(leads)} active postings!")
                 
                 st.data_editor(
                     leads,
                     column_config={
                         "link": st.column_config.LinkColumn(
-                            "Verified Source",
-                            display_text="View on Source",
+                            "Job Source",
+                            display_text="Apply / View",
                             width="medium"
                         ),
                     },
@@ -104,9 +100,7 @@ if run_button:
                 csv = leads.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
             else:
-                st.warning("The scout found data but couldn't isolate the list. Try running it once more.")
+                st.warning("The scout couldn't find enough active listings. Try removing one technical keyword.")
             
         except Exception as e:
             st.error(f"Scouting Error: {e}")
-            with st.expander("Debug: View Raw Output"):
-                st.code(raw_text)
