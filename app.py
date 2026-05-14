@@ -29,19 +29,19 @@ with st.sidebar:
 if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
-    with st.spinner(f"Scouting for verified {role} roles..."):
-        # UPDATED PROMPT: Focused on actual board URLs and strictly local/remote mix
+    with st.spinner(f"Scouting verified sources for {role} roles..."):
+        # PROMPT: Agnostic Source Fallback Logic
         prompt = (
-            f"Today is {today_date}. Act as a senior recruiter. "
-            f"Search for 15-20 ACTIVE job listings for '{role}' in {location}. "
-            f"Focus: SF Bay Area (Hayward, Oakland, SF) and Remote. "
-            f"Requirements: {keywords}. Salary floor: ${salary:,}+. "
-            "\n--- SEARCH PROTOCOL ---\n"
-            "1. ONLY return real job postings from job boards (Indeed, LinkedIn, BuiltIn) or company career sites. "
-            "2. ABSOLUTELY NO blog posts, 'Top 10' articles, or career advice pages. "
-            "3. If you see a job but no deep-link, use the Google Search result URL for that listing. "
-            "4. NO PLACEHOLDERS: Do not use 'a1b2c3d4' or other fake IDs. "
-            "\nOutput ONLY a JSON list. Keys: title, company, salary, location, source, link."
+            f"Today is {today_date}. Act as a senior technical recruiter. "
+            f"Find 15-20 active job listings for '{role}' in {location}. "
+            f"Prioritize matches for: {keywords}. Target: ${salary:,}+. "
+            "\n--- THE AGNOSTIC FALLBACK PROTOCOL ---\n"
+            "1. You must provide a working URL for every job found. "
+            "2. If you find a direct application deep-link, use it. "
+            "3. FALLBACK: If a direct link is not obvious, provide the URL of the Google Search result "
+            "or the job board aggregator page (Indeed, LinkedIn, ZipRecruiter) where you saw the listing. "
+            "4. NEVER guess or synthesize a URL. No placeholder IDs. "
+            "\nOutput ONLY a JSON list of objects with: title, company, salary, location, source, link."
         )
 
         try:
@@ -50,38 +50,45 @@ if run_button:
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.6 
+                    'temperature': 0.5 
                 }
             )
             
-            raw_text = response.text
-            
-            # IMPROVED EXTRACTION: Find the content between the FIRST [ and the LAST ]
-            match = re.search(r'\[.*\]', raw_text, re.DOTALL)
-            
-            if match:
-                json_str = match.group(0).strip()
+            # ARMOR: Validate that we actually got a text response
+            if response and response.text:
+                raw_text = response.text
                 
-                # Check for empty or malformed results before parsing
-                if len(json_str) > 2:
+                # Surgical extraction using regex
+                match = re.search(r'\[.*\]', raw_text, re.DOTALL)
+                
+                if match:
+                    json_str = match.group(0).strip()
+                    
+                    # Bracket-level balancing to ensure a clean list
+                    bracket_level = 0
+                    for i, char in enumerate(json_str):
+                        if char == '[': bracket_level += 1
+                        elif char == ']': bracket_level -= 1
+                        if bracket_level == 0:
+                            json_str = json_str[:i+1]
+                            break
+
                     job_list = json.loads(json_str)
                     leads = pd.DataFrame(job_list)
                     leads.columns = [c.lower() for c in leads.columns]
 
-                    # Post-Processing: Strip known blog/article noise
-                    noise = ['/blog/', '/resources/', '/wu-news/', '/advice/', 'top-10']
+                    # Post-Processing: Strip known hallucination patterns
+                    placeholders = ['a1b2c3d4', '98765', '12345', 'placeholder']
                     if 'link' in leads.columns:
-                        leads = leads[~leads['link'].str.contains('|'.join(noise), case=False, na=False)]
-                        # Drop fake ID hallucinations
-                        leads = leads[~leads['link'].str.contains('a1b2c3d4|98765|12345', na=False)]
+                        leads = leads[~leads['link'].str.contains('|'.join(placeholders), case=False, na=False)]
 
-                    st.success(f"Verified {len(leads)} potential leads for {today_date}!")
+                    st.success(f"Verified {len(leads)} active postings!")
                     
                     st.data_editor(
                         leads,
                         column_config={
                             "link": st.column_config.LinkColumn(
-                                "Application Link",
+                                "Source Link",
                                 display_text="View on Source",
                                 width="medium"
                             ),
@@ -94,11 +101,9 @@ if run_button:
                     csv = leads.to_csv(index=False).encode('utf-8')
                     st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
                 else:
-                    st.warning("The scout returned an empty list. Try reducing the number of keywords.")
+                    st.warning("The scout found data but it wasn't formatted correctly. Try clicking 'Start Scouting' again.")
             else:
-                st.error("Could not isolate job data from the response.")
-                with st.expander("Debug: Raw Response"):
-                    st.code(raw_text)
-            
+                st.error("The AI search returned an empty result. This can happen if the search tool is throttled or a safety filter is triggered.")
+                
         except Exception as e:
             st.error(f"Scouting Error: {e}")
