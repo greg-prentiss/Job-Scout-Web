@@ -30,14 +30,16 @@ if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
     with st.spinner(f"Scouting the live web for {role} roles..."):
-        # UPDATED PROMPT: Demanding direct URLs and allowing "Prioritization" over "Hard Requirements"
+        # UPDATED PROMPT: Loosened constraints to allow for related titles and flexible matches
         prompt = (
-            f"Today is {today_date}. Act as a recruiter in {industry}. "
-            f"Search the web to find 10 CURRENTLY OPEN and active {role} roles in {location}. "
-            f"Prioritize these keywords: {keywords}. Salary target: {salary}+. "
-            "CRITICAL: Do not return 'google.com/ground-api-redirect' URLs. "
-            "Return only the direct destination URL (e.g., Greenhouse, Lever, LinkedIn, Indeed). "
-            "Return a JSON list with exactly these keys: title, company, salary, location, source, link."
+            f"Today is {today_date}. Act as an expert career scout in {industry}. "
+            f"Search the web for approximately 10 active job openings similar to '{role}' in {location}. "
+            f"Focus on roles that value these skills: {keywords}. "
+            f"Ideally, target a salary of ${salary:,}+, but include strong matches slightly below this if they fit the profile. "
+            "I need direct links to the job postings (like Greenhouse, Lever, LinkedIn, or Company sites). "
+            "Please avoid links that are just 'google.com/ground-api-redirect'. "
+            "Return the results as a raw JSON list with these keys: title, company, salary, location, source, link. "
+            "Provide only the JSON list."
         )
 
         try:
@@ -46,11 +48,16 @@ if run_button:
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.7 
+                    'temperature': 0.8 # Increased for better variety
                 }
             )
             
             text_data = response.text
+            # Resilient parsing for markdown code blocks
+            if "```json" in text_data:
+                text_data = text_data.split("
+```json")[1].split("```")[0]
+            
             start_index = text_data.find("[")
             end_index = text_data.rfind("]") + 1
             
@@ -59,12 +66,12 @@ if run_button:
                 job_list = json.loads(clean_json)
                 leads = pd.DataFrame(job_list)
 
-                # Ensure column names are lowercase to match the config below
+                # Standardize column names
                 leads.columns = [c.lower() for c in leads.columns]
 
                 st.success(f"Found {len(leads)} potential leads for {today_date}!")
                 
-                # UPDATED UI: Clean clickable buttons
+                # Interactive Table
                 st.data_editor(
                     leads,
                     column_config={
@@ -76,13 +83,15 @@ if run_button:
                     },
                     hide_index=True,
                     use_container_width=True,
-                    disabled=leads.columns # Makes it read-only
+                    disabled=leads.columns
                 )
                 
                 csv = leads.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
             else:
-                st.error("No valid leads found with current filters. Try removing a keyword or lowering the salary floor.")
+                st.warning("The scout found limited results. Try widening your location or reducing the number of keywords.")
+                st.info("Raw response for debugging:")
+                st.write(text_data)
             
         except Exception as e:
             st.error(f"Error during scouting: {e}")
