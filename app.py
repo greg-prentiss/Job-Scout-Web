@@ -3,6 +3,7 @@ import pandas as pd
 from google.genai import Client
 import json
 import datetime
+import re
 
 # 1. SECURE API KEY ACCESS
 client = Client(api_key=st.secrets["GEMINI_API_KEY"])
@@ -28,17 +29,17 @@ with st.sidebar:
 if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
-    with st.spinner(f"Running Multi-Pass verification for {role} roles..."):
+    with st.spinner(f"Scouting the live web for {role} roles..."):
         prompt = (
             f"Today is {today_date}. Act as a senior technical recruiter. "
-            f"Search the web for 15-20 active job listings for '{role}' in {location}. "
-            f"Preferences: {keywords}. Target: ${salary:,}+. "
+            f"Find 15-20 active job listings for '{role}' in {location}. "
+            f"Technical stack priorities: {keywords}. Target: ${salary:,}+. "
+            "WILDCARD: Include 2-3 high-level roles outside the exact title, such as 'Infrastructure Manager' or 'Site Reliability Lead'. "
             "\n--- MANDATORY LINK VERIFICATION ---\n"
-            "1. You must provide a DIRECT DEEP LINK to the job posting. "
+            "1. Provide a DIRECT DEEP LINK to the job posting. "
             "2. A deep link MUST contain a unique identifier (e.g., /jobs/12345 or /postings/abc-xyz). "
             "3. DO NOT guess or synthesize URLs based on company names. "
-            "4. If you see a generic career page, search deeper for the specific job's unique URL. "
-            "5. Avoid ZipRecruiter 'ghost' links; prioritize Greenhouse, Lever, Workday, or LinkedIn direct postings. "
+            "4. Avoid generic career pages and ZipRecruiter 'ghost' links. "
             "\n--- OUTPUT FORMAT ---\n"
             "Return ONLY a JSON list of objects. No markdown, no triple backticks, no preamble. "
             "Keys: title, company, salary, location, source, link."
@@ -56,30 +57,29 @@ if run_button:
             
             raw_text = response.text
             
-            # IMPROVED EXTRACTION: Handles the "Extra data" issue by being more specific
-            start_index = raw_text.find("[")
-            end_index = raw_text.rfind("]") + 1
+            # IMPROVED EXTRACTION: Using regex to find the JSON block more reliably
+            # This looks for the content between the first [ and the last ]
+            json_match = re.search(r'\[.*\]', raw_text, re.DOTALL)
             
-            if start_index != -1 and end_index > start_index:
-                json_str = raw_text[start_index:end_index].strip()
+            if json_match:
+                json_str = json_match.group(0).strip()
                 
-                # Double-check for nested arrays that might cause "Extra data"
-                # If the AI provided multiple lists, this ensures we only take the first one
-                if json_str.count('[') > 1 and json_str.count(']') > 1:
-                     # Attempt to find the first complete valid array
-                     bracket_level = 0
-                     for i, char in enumerate(json_str):
-                         if char == '[': bracket_level += 1
-                         if char == ']': bracket_level -= 1
-                         if bracket_level == 0:
-                             json_str = json_str[:i+1]
-                             break
+                # Double-check for multiple lists and take the longest one (usually the main one)
+                if json_str.count('[') > 1:
+                    # Basic bracket balancing to extract just the first full list
+                    bracket_level = 0
+                    for i, char in enumerate(json_str):
+                        if char == '[': bracket_level += 1
+                        elif char == ']': bracket_level -= 1
+                        if bracket_level == 0:
+                            json_str = json_str[:i+1]
+                            break
 
                 job_list = json.loads(json_str)
                 leads = pd.DataFrame(job_list)
                 leads.columns = [c.lower() for c in leads.columns]
 
-                # Filter: Only keep links that look like actual deep links
+                # Filter: Remove generic or short URLs
                 if 'link' in leads.columns:
                     leads = leads[leads['link'].str.len() > 35]
 
@@ -102,11 +102,9 @@ if run_button:
                 csv = leads.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
             else:
-                st.warning("The scout couldn't isolate the data list. Try running it again.")
+                st.warning("The scout couldn't isolate the data list. View the raw response below to troubleshoot.")
+                with st.expander("Raw AI Response"):
+                    st.write(raw_text)
             
         except Exception as e:
-            # Enhanced error reporting to help us debug the "Extra data" if it persists
             st.error(f"Scouting Error: {e}")
-            if 'raw_text' in locals():
-                with st.expander("View Raw Response"):
-                    st.code(raw_text)
