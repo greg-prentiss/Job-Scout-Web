@@ -29,20 +29,19 @@ with st.sidebar:
 if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
-    with st.spinner(f"Filtering for active {role} postings..."):
-        # UPDATED PROMPT: Strict ban on articles/blogs + localized priority
+    with st.spinner(f"Scouting for verified {role} roles..."):
+        # UPDATED PROMPT: Focused on actual board URLs and strictly local/remote mix
         prompt = (
-            f"Today is {today_date}. Act as a senior technical recruiter. "
-            f"Search for 15-20 ACTIVE, LIVE job postings for '{role}' in {location}. "
-            f"Focus on the SF Bay Area (Hayward, Oakland, SF) first, then Remote. "
-            f"Required tech: {keywords}. Target: ${salary:,}+. "
-            "\n--- SEARCH INTEGRITY RULES ---\n"
-            "1. You must only return actual job listings. "
-            "2. ABSOLUTELY FORBIDDEN: Do not include blog posts, career advice articles, or 'Top 10' lists. "
-            "3. Every link must point to a specific job board (LinkedIn, Indeed, BuiltIn) or a company career page. "
-            "4. If you cannot find a deep-link, provide the URL of the job search results page on that platform. "
-            "5. NO HALLUCINATIONS: If a job does not meet the $120k salary floor, skip it. "
-            "\nOutput ONLY a JSON list of objects with: title, company, salary, location, source, link."
+            f"Today is {today_date}. Act as a senior recruiter. "
+            f"Search for 15-20 ACTIVE job listings for '{role}' in {location}. "
+            f"Focus: SF Bay Area (Hayward, Oakland, SF) and Remote. "
+            f"Requirements: {keywords}. Salary floor: ${salary:,}+. "
+            "\n--- SEARCH PROTOCOL ---\n"
+            "1. ONLY return real job postings from job boards (Indeed, LinkedIn, BuiltIn) or company career sites. "
+            "2. ABSOLUTELY NO blog posts, 'Top 10' articles, or career advice pages. "
+            "3. If you see a job but no deep-link, use the Google Search result URL for that listing. "
+            "4. NO PLACEHOLDERS: Do not use 'a1b2c3d4' or other fake IDs. "
+            "\nOutput ONLY a JSON list. Keys: title, company, salary, location, source, link."
         )
 
         try:
@@ -51,56 +50,55 @@ if run_button:
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.7 # Increased slightly to find more leads while obeying rules
+                    'temperature': 0.6 
                 }
             )
             
             raw_text = response.text
-            # Robust extraction logic to prevent "Extra data" errors
+            
+            # IMPROVED EXTRACTION: Find the content between the FIRST [ and the LAST ]
             match = re.search(r'\[.*\]', raw_text, re.DOTALL)
             
             if match:
                 json_str = match.group(0).strip()
-                # Bracket balancing
-                bracket_level = 0
-                for i, char in enumerate(json_str):
-                    if char == '[': bracket_level += 1
-                    elif char == ']': bracket_level -= 1
-                    if bracket_level == 0:
-                        json_str = json_str[:i+1]
-                        break
-
-                job_list = json.loads(json_str)
-                leads = pd.DataFrame(job_list)
-                leads.columns = [c.lower() for c in leads.columns]
-
-                # Post-Processing: Drop links that look like articles or generic "help" pages
-                junk_keywords = ['/blog/', '/resources/', '/wu-news/', '/advice/', '/career-advice/']
-                if 'link' in leads.columns:
-                    leads = leads[~leads['link'].str.contains('|'.join(junk_keywords), case=False, na=False)]
-                    # Remove the a1b2c3d4 placeholder hallucinations
-                    leads = leads[~leads['link'].str.contains('a1b2c3d4|98765|12345', na=False)]
-
-                st.success(f"Verified {len(leads)} active postings!")
                 
-                st.data_editor(
-                    leads,
-                    column_config={
-                        "link": st.column_config.LinkColumn(
-                            "Job Source",
-                            display_text="Apply / View",
-                            width="medium"
-                        ),
-                    },
-                    hide_index=True,
-                    use_container_width=True,
-                    disabled=leads.columns
-                )
-                
-                csv = leads.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
+                # Check for empty or malformed results before parsing
+                if len(json_str) > 2:
+                    job_list = json.loads(json_str)
+                    leads = pd.DataFrame(job_list)
+                    leads.columns = [c.lower() for c in leads.columns]
+
+                    # Post-Processing: Strip known blog/article noise
+                    noise = ['/blog/', '/resources/', '/wu-news/', '/advice/', 'top-10']
+                    if 'link' in leads.columns:
+                        leads = leads[~leads['link'].str.contains('|'.join(noise), case=False, na=False)]
+                        # Drop fake ID hallucinations
+                        leads = leads[~leads['link'].str.contains('a1b2c3d4|98765|12345', na=False)]
+
+                    st.success(f"Verified {len(leads)} potential leads for {today_date}!")
+                    
+                    st.data_editor(
+                        leads,
+                        column_config={
+                            "link": st.column_config.LinkColumn(
+                                "Application Link",
+                                display_text="View on Source",
+                                width="medium"
+                            ),
+                        },
+                        hide_index=True,
+                        use_container_width=True,
+                        disabled=leads.columns
+                    )
+                    
+                    csv = leads.to_csv(index=False).encode('utf-8')
+                    st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
+                else:
+                    st.warning("The scout returned an empty list. Try reducing the number of keywords.")
             else:
-                st.warning("The scout couldn't find enough active listings. Try removing one technical keyword.")
+                st.error("Could not isolate job data from the response.")
+                with st.expander("Debug: Raw Response"):
+                    st.code(raw_text)
             
         except Exception as e:
             st.error(f"Scouting Error: {e}")
