@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from google.genai import Client
 import json
+import datetime
 
 # 1. SECURE API KEY ACCESS
 # This looks for the key in your .streamlit/secrets.toml (locally) 
@@ -9,7 +10,7 @@ import json
 client = Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 # 2. BRANDING YOUR APP
-# This replaces the generic "Streamlit" tab name with your new catchy name.
+# Replaces the generic "Streamlit" tab name with your catchy new name.
 st.set_page_config(page_title="Career-Paths", layout="wide")
 st.title("📡 Career-Paths")
 
@@ -29,25 +30,33 @@ with st.sidebar:
 
 # 2. Logic Execution
 if run_button:
-    # Requires a local .streamlit/secrets.toml file or Streamlit Cloud Secrets
-    client = Client(api_key=st.secrets["GEMINI_API_KEY"])
+    # Use today's date to force the AI to look for current, active listings
+    today_date = datetime.date.today().strftime("%B %d, %Y")
 
-    with st.spinner(f"Scouting the web..."):
+    with st.spinner(f"Scouting the live web for {role} roles..."):
+        # Updated prompt with the date and a directive to find "active" roles
         prompt = (
-            f"Act as a recruiter in {industry}. Find 10 open {role} roles in {location}. "
-            f"Requirements: {keywords}. Salary: {salary}+. "
-            "Return a JSON list with: title, company, salary, location, source, link."
+            f"Today is {today_date}. Act as a recruiter in {industry}. "
+            f"Search the web to find 10 CURRENTLY OPEN and active {role} roles in {location}. "
+            f"Requirements: {keywords}. Salary expectation: {salary}+. "
+            "Return a JSON list with exactly these keys: title, company, salary, location, source, link. "
+            "Ensure the links are direct to the job posting where possible."
         )
 
         try:
+            # Tool-enabled call: This activates the Google Search engine
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
-                contents=prompt
+                contents=prompt,
+                config={
+                    'tools': [{'google_search': {}}], # Enables live scouting
+                    'temperature': 0.7              # Encourages variety in results
+                }
             )
             
             text_data = response.text
             
-            # Find the JSON list bounds
+            # Find the JSON list bounds in the AI response
             start_index = text_data.find("[")
             end_index = text_data.rfind("]") + 1
             
@@ -57,19 +66,20 @@ if run_button:
                 # Parse the string into a Python list
                 job_list = json.loads(clean_json)
                 
-                # Turn that list into a DataFrame
+                # Convert the list into a Pandas DataFrame
                 leads = pd.DataFrame(job_list)
                 
-                st.success(f"Found {len(leads)} potential leads!")
+                st.success(f"Found {len(leads)} potential leads for {today_date}!")
                 
-                # UPDATED: Replaced deprecated use_container_width with width='stretch'
+                # Display the data
                 st.dataframe(leads, width='stretch')
                 
+                # Provide a CSV download option
                 csv = leads.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
             else:
-                st.error("Format mismatch. Try refining your keywords.")
-                st.code(text_data)
+                st.error("The scout returned data in an unexpected format. Try refining your keywords.")
+                st.code(text_data) # Shows raw data for debugging
             
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Error during scouting: {e}")
