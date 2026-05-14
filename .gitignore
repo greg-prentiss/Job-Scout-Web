@@ -1,0 +1,14 @@
+# Virtual Environment Folder
+venv/
+
+# Environment Variable Files
+.env
+
+# Streamlit-specific Secrets (Critical!)
+.streamlit/
+
+# Python cache files
+__pycache__/
+
+# Local data exports
+*.csv
