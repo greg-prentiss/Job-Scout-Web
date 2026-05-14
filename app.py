@@ -29,19 +29,21 @@ with st.sidebar:
 if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
-    with st.spinner(f"Scouting the live web for {role} roles..."):
+    with st.spinner(f"Scouting all available sources for {role} roles..."):
+        # UPDATED PROMPT: Brand-Agnostic with Search-Result Fallback
         prompt = (
             f"Today is {today_date}. Act as a senior technical recruiter. "
             f"Find 15-20 active job listings for '{role}' in {location}. "
-            f"Technical stack priorities: {keywords}. Target: ${salary:,}+. "
-            "WILDCARD: Include 2-3 high-level roles outside the exact title, such as 'Infrastructure Manager' or 'Site Reliability Lead'. "
-            "\n--- MANDATORY LINK VERIFICATION ---\n"
-            "1. Provide a DIRECT DEEP LINK to the job posting. "
-            "2. A deep link MUST contain a unique identifier (e.g., /jobs/12345 or /postings/abc-xyz). "
-            "3. DO NOT guess or synthesize URLs based on company names. "
-            "4. Avoid generic career pages and ZipRecruiter 'ghost' links. "
+            f"Priorities: {keywords}. Target: ${salary:,}+. "
+            "\n--- VERIFICATION PROTOCOL ---\n"
+            "1. Your primary goal is to provide a working URL for every job found. "
+            "2. If you find a direct application deep-link, use it. "
+            "3. FALLBACK RULE: If you cannot find a direct deep-link, provide the URL of the Google Search result "
+            "or the job board landing page (LinkedIn, Indeed, etc.) where you saw the listing. "
+            "4. ABSOLUTELY FORBIDDEN: Never guess, synthesize, or hallucinate a URL. Do not create IDs like 'a1b2c3d4'. "
+            "5. If a link is not explicitly visible in your search results, provide the search result's source URL. "
             "\n--- OUTPUT FORMAT ---\n"
-            "Return ONLY a JSON list of objects. No markdown, no triple backticks, no preamble. "
+            "Return ONLY a JSON list. No markdown. "
             "Keys: title, company, salary, location, source, link."
         )
 
@@ -51,46 +53,42 @@ if run_button:
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.7
+                    'temperature': 0.4 # Lowered to further reduce "creative" guessing
                 }
             )
             
             raw_text = response.text
-            
-            # IMPROVED EXTRACTION: Using regex to find the JSON block more reliably
-            # This looks for the content between the first [ and the last ]
             json_match = re.search(r'\[.*\]', raw_text, re.DOTALL)
             
             if json_match:
                 json_str = json_match.group(0).strip()
                 
-                # Double-check for multiple lists and take the longest one (usually the main one)
-                if json_str.count('[') > 1:
-                    # Basic bracket balancing to extract just the first full list
-                    bracket_level = 0
-                    for i, char in enumerate(json_str):
-                        if char == '[': bracket_level += 1
-                        elif char == ']': bracket_level -= 1
-                        if bracket_level == 0:
-                            json_str = json_str[:i+1]
-                            break
+                # Robust bracket-leveling to capture exactly one list
+                bracket_level = 0
+                for i, char in enumerate(json_str):
+                    if char == '[': bracket_level += 1
+                    elif char == ']': bracket_level -= 1
+                    if bracket_level == 0:
+                        json_str = json_str[:i+1]
+                        break
 
                 job_list = json.loads(json_str)
                 leads = pd.DataFrame(job_list)
                 leads.columns = [c.lower() for c in leads.columns]
 
-                # Filter: Remove generic or short URLs
+                # CLEANUP: Remove obvious placeholders if they still slip through
+                placeholders = ['a1b2c3d4', '98765', '12345']
                 if 'link' in leads.columns:
-                    leads = leads[leads['link'].str.len() > 35]
+                    leads = leads[~leads['link'].str.contains('|'.join(placeholders), case=False, na=False)]
 
-                st.success(f"Verified {len(leads)} deep-link leads!")
+                st.success(f"Scout complete! Found {len(leads)} potential leads.")
                 
                 st.data_editor(
                     leads,
                     column_config={
                         "link": st.column_config.LinkColumn(
-                            "Application Link",
-                            display_text="Apply Directly",
+                            "Source Link",
+                            display_text="View on Source",
                             width="medium"
                         ),
                     },
@@ -102,9 +100,9 @@ if run_button:
                 csv = leads.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
             else:
-                st.warning("The scout couldn't isolate the data list. View the raw response below to troubleshoot.")
-                with st.expander("Raw AI Response"):
-                    st.write(raw_text)
+                st.warning("The scout couldn't format the data. Please try again.")
             
         except Exception as e:
             st.error(f"Scouting Error: {e}")
+            with st.expander("Debug: Raw Response"):
+                st.code(raw_text)
