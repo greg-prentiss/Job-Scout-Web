@@ -3,6 +3,7 @@ import pandas as pd
 from google.genai import Client
 import json
 import datetime
+import re
 
 # 1. SECURE API KEY ACCESS
 client = Client(api_key=st.secrets["GEMINI_API_KEY"])
@@ -28,41 +29,58 @@ with st.sidebar:
 if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
-    with st.spinner(f"Scouting all available sources for {role} roles..."):
-        # UPDATED PROMPT: Explicitly ordering the Search-Result Fallback
+    with st.spinner(f"Scouting verified sources for {role} roles..."):
+        # UPDATED PROMPT: Prioritizing "Search Result Fallback" over hallucinated deep links
         prompt = (
-            f"Today is {today_date}. Act as a senior recruiter. "
+            f"Today is {today_date}. Act as a senior technical recruiter. "
             f"Find 15-20 active job listings for '{role}' in {location}. "
-            f"Prioritize matches for: {keywords}. Target salary: ${salary:,}+. "
-            "\n--- THE UNIVERSAL FALLBACK PROTOCOL ---\n"
-            "1. You must provide a URL for every job found. "
-            "2. If you find a direct application link (Greenhouse, Lever, Company Career Page), use it. "
-            "3. FALLBACK: If a direct link is not obvious, you MUST provide the URL of the Google Search result "
-            "or the job board aggregator page (Indeed, LinkedIn, ZipRecruiter) where the job was seen. "
-            "4. NEVER synthesize or guess a URL. If a URL is not explicitly in the search data, use the search source URL. "
-            "\nOutput the results as a JSON list of objects with these keys: title, company, salary, location, source, link."
+            f"Priorities: {keywords}. Target: ${salary:,}+. "
+            "\n--- VERIFICATION PROTOCOL ---\n"
+            "1. provide a WORKING URL for every job found. "
+            "2. If a direct application deep-link is visible in the search results, use it. "
+            "3. FALLBACK: If a direct deep-link is not visible, you MUST provide the URL of the Google Search result "
+            "or the job board page (Indeed, LinkedIn, etc.) where the job was seen. "
+            "4. NEVER guess or synthesize a URL (e.g., no 'a1b2c3d4' or '98765' placeholders). "
+            "5. It is better to provide a search result link than a broken 404 link. "
+            "\nReturn ONLY a JSON list of objects. No markdown. No preamble. "
+            "Keys: title, company, salary, location, source, link."
         )
 
         try:
-            # FORCED JSON MODE: This removes the need for regex parsing
+            # Reverted: No response_mime_type to stay compatible with Google Search tool
             response = client.models.generate_content(
                 model="gemini-2.5-flash", 
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.6,
-                    'response_mime_type': 'application/json'
+                    'temperature': 0.4 
                 }
             )
             
-            # Since we forced JSON mode, response.text will be a clean JSON string
-            job_list = json.loads(response.text)
+            raw_text = response.text
             
-            if job_list and len(job_list) > 0:
+            # HARDENED EXTRACTION: Using regex to find the first valid list block
+            # This prevents "Extra Data" errors by ignoring anything outside the brackets.
+            match = re.search(r'\[.*\]', raw_text, re.DOTALL)
+            
+            if match:
+                json_str = match.group(0).strip()
+                
+                # Manual trim if the AI provided text after the final bracket
+                # This ensures json.loads only sees the list
+                bracket_level = 0
+                for i, char in enumerate(json_str):
+                    if char == '[': bracket_level += 1
+                    elif char == ']': bracket_level -= 1
+                    if bracket_level == 0:
+                        json_str = json_str[:i+1]
+                        break
+
+                job_list = json.loads(json_str)
                 leads = pd.DataFrame(job_list)
                 leads.columns = [c.lower() for c in leads.columns]
 
-                # Filter: Final check to remove obvious hallucinations (IDs like a1b2c3d4)
+                # Post-Processing: Kill common hallucinated ID patterns
                 placeholders = ['a1b2c3d4', '98765', '12345', 'placeholder']
                 if 'link' in leads.columns:
                     leads = leads[~leads['link'].str.contains('|'.join(placeholders), case=False, na=False)]
@@ -73,8 +91,8 @@ if run_button:
                     leads,
                     column_config={
                         "link": st.column_config.LinkColumn(
-                            "Source Link",
-                            display_text="View Posting",
+                            "Verified Source",
+                            display_text="View on Source",
                             width="medium"
                         ),
                     },
@@ -86,7 +104,9 @@ if run_button:
                 csv = leads.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
             else:
-                st.warning("The scout found 0 results. Try removing a keyword to broaden the search.")
+                st.warning("The scout found data but couldn't isolate the list. Try running it once more.")
             
         except Exception as e:
             st.error(f"Scouting Error: {e}")
+            with st.expander("Debug: View Raw Output"):
+                st.code(raw_text)
