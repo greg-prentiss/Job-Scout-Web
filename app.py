@@ -29,16 +29,17 @@ with st.sidebar:
 if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
-    with st.spinner(f"Scouting the live web for {role} roles..."):
+    with st.spinner(f"Scouting the live web for a wide variety of {role} roles..."):
+        # UPDATED PROMPT: Maximizing volume and forcing direct URLs
         prompt = (
-            f"Today is {today_date}. Act as an expert career scout in {industry}. "
-            f"Search the web for approximately 10 active job openings similar to '{role}' in {location}. "
-            f"Focus on roles that value these skills: {keywords}. "
-            f"Target a salary of ${salary:,}+. "
-            "I need direct links to the job postings (like Greenhouse, Lever, LinkedIn, or Company sites). "
-            "Avoid links that are just '[google.com/ground-api-redirect](https://google.com/ground-api-redirect)'. "
+            f"Today is {today_date}. Act as a high-volume career scout. "
+            f"Perform a broad search for active job openings for '{role}' or related senior technical roles in {location}. "
+            f"Keywords like '{keywords}' are preferred but not mandatory—find as many high-quality matches as possible. "
+            f"Target a salary of ${salary:,}+ but do not exclude roles without a listed salary. "
+            "CRITICAL ON LINKS: You MUST provide the direct destination URL (e.g., Greenhouse.io, Lever.co, LinkedIn.com, or company career pages). "
+            "ABSOLUTELY FORBIDDEN: Do not provide 'google.com/ground-api-redirect' or 'vertexaisearch' links. "
             "Return a JSON list with these keys: title, company, salary, location, source, link. "
-            "Provide ONLY the JSON list, no other text."
+            "Maximize your search to find up to 15 unique leads. Provide ONLY the JSON list."
         )
 
         try:
@@ -47,13 +48,13 @@ if run_button:
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.8 
+                    'temperature': 0.9 # Higher temperature for more variety/volume
                 }
             )
             
             raw_text = response.text
             
-            # THE "STRAIGHTFORWARD" FIX: Find the JSON list without using complex splits
+            # Robust JSON extraction
             start = raw_text.find("[")
             end = raw_text.rfind("]") + 1
             
@@ -62,12 +63,12 @@ if run_button:
                 job_list = json.loads(json_data)
                 leads = pd.DataFrame(job_list)
 
-                # Standardize column names to lowercase for the UI config
+                # Standardize column names
                 leads.columns = [c.lower() for c in leads.columns]
 
-                st.success(f"Found {len(leads)} potential leads!")
+                st.success(f"Found {len(leads)} potential leads for {today_date}!")
                 
-                # Render the table with clickable buttons
+                # Render the table
                 st.data_editor(
                     leads,
                     column_config={
@@ -85,8 +86,7 @@ if run_button:
                 csv = leads.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
             else:
-                st.warning("No clear leads found. Try broadening your keywords.")
-                st.info("Debugging Info: No JSON list detected in response.")
+                st.warning("No leads found. I've loosened the search—try clicking 'Start Scouting' again.")
             
         except Exception as e:
             st.error(f"Scouting Error: {e}")
