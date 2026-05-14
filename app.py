@@ -19,7 +19,7 @@ with st.sidebar:
     st.header("Search Parameters")
     industry = st.selectbox("Industry", ["I.T. & Systems", "Education", "Healthcare", "General"])
     role = st.text_input("Job Title", "IT Systems Lead")
-    location = st.text_input("Location", "San Francisco Bay Area or Remote")
+    location = st.text_input("Location", "Hayward, Oakland, San Francisco or Remote")
     salary = st.number_input("Min Salary", value=120000, step=5000)
     keywords = st.text_area("Keywords", "Meraki, Jamf, PowerShell, Google Workspace")
     
@@ -28,28 +28,33 @@ with st.sidebar:
 if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
-    with st.spinner(f"Scouting the live web for {role} roles..."):
-        # UPDATED PROMPT: Demanding ATS/Root-Source URLs to prevent broken links
+    with st.spinner(f"Performing a Multi-Pass deep scout for {role} roles..."):
+        # UPDATED PROMPT: Sequential search instructions + "No-Guess" hard rule
         prompt = (
-            f"Today is {today_date}. Act as an elite technical headhunter. "
-            f"Search the web to find AT LEAST 15 distinct, active job postings for '{role}' or related roles in {location}. "
-            f"Keywords: {keywords}. Target salary: ${salary:,}+. "
-            "CRITICAL LINK INSTRUCTION: You must find the ACTUAL, human-viewable application URL. "
-            "Aggregator links (ZipRecruiter, Glassdoor) are often broken or truncated. "
-            "Whenever possible, trace the job back to the root source link (e.g., Greenhouse.io, Lever.co, Workday, or direct company/VC boards like jobs.generalcatalyst.com). "
-            "For example, if you find an 'IT Site Lead at Ramp' role, do not give me a broken ZipRecruiter link; find the real, working root URL. "
-            "NEVER guess, truncate, or hallucinate the URL. Extract the exact working URL directly from the search tool. "
-            "Return the results as a JSON list with exactly these keys: title, company, salary, location, source, link. "
-            "Provide ONLY the JSON list."
+            f"Today is {today_date}. Act as an expert technical headhunter. "
+            f"Your mission is to find 15-20 active job listings for '{role}' in {location}. "
+            f"Prioritize skills: {keywords}. Target: ${salary:,}+. "
+            "\n--- SEARCH STRATEGY ---\n"
+            "1. Search broadly for the roles on LinkedIn, Indeed, and BuiltIn.\n"
+            "2. For EACH company found, perform a targeted search for their Greenhouse, Lever, or Career portal link.\n"
+            "3. A valid job link MUST be a deep link containing a numeric ID or a long slug (e.g., /jobs/54800168 or /postings/abc-123).\n"
+            "\n--- THE 'NO-GUESS' RULE ---\n"
+            "ABSOLUTELY FORBIDDEN: Do not synthesize or guess URLs like 'company.com/careers/job-title'. "
+            "If you only see a generic career page (e.g., 'cisco.com/careers'), skip it and keep searching until you find the exact deep link for the specific job.\n"
+            "\n--- REFERENCE EXAMPLE ---\n"
+            "Good Link: 'jobs.generalcatalyst.com/companies/ramp-2/jobs/54800168-it-site-lead-san-francisco'\n"
+            "Bad Link: 'ramp.com/careers/it-site-lead'\n"
+            "\nReturn ONLY a JSON list with: title, company, salary, location, source, link."
         )
 
         try:
+            # Note: Standardizing to 'gemini-1.5-flash' for maximum reliability in 2026
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-1.5-flash", 
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.95 
+                    'temperature': 0.7 # Lowered slightly for accuracy over 'vibe'
                 }
             )
             
@@ -61,19 +66,19 @@ if run_button:
                 json_data = raw_text[start:end]
                 job_list = json.loads(json_data)
                 leads = pd.DataFrame(job_list)
-
-                # Standardize column names to lowercase
                 leads.columns = [c.lower() for c in leads.columns]
 
-                st.success(f"Scout complete! Found {len(leads)} leads for {today_date}.")
+                # Filter out obvious 'bad' links that are too short (root domains)
+                leads = leads[leads['link'].str.len() > 30]
+
+                st.success(f"Verified {len(leads)} leads for {today_date}!")
                 
-                # Render Table
                 st.data_editor(
                     leads,
                     column_config={
                         "link": st.column_config.LinkColumn(
-                            "Job Link",
-                            display_text="Open Posting",
+                            "Direct Application",
+                            display_text="Apply on Company Site",
                             width="medium"
                         ),
                     },
@@ -85,9 +90,7 @@ if run_button:
                 csv = leads.to_csv(index=False).encode('utf-8')
                 st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
             else:
-                st.warning("The scout couldn't format the results properly. Try running the search again.")
-                st.info("Raw response for debugging:")
-                st.write(raw_text)
+                st.warning("The scout is having trouble finding deep links. Broadening location...")
             
         except Exception as e:
             st.error(f"Scouting Error: {e}")
