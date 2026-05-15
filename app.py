@@ -31,7 +31,7 @@ if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
     
     # PRECISION LOGIC
-    temp_setting = 0.4 if not deep_scout else 0.8 
+    temp_setting = 0.5 if not deep_scout else 0.8 
     max_leads = 25 if deep_scout else 15
 
     with st.spinner(f"Scouting {industry}..."):
