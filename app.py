@@ -19,28 +19,29 @@ st.markdown("Find your next role using Gemini-powered web scouting.")
 with st.sidebar:
     st.header("Search Parameters")
     industry = st.selectbox("Industry", ["I.T. & Systems", "Education", "Healthcare", "General"])
-    role = st.text_input("Job Title", "IT Systems Lead")
+    role = st.text_input("Job Title", "IT Admin")
     location = st.text_input("Location", "Hayward, Oakland, San Francisco or Remote")
-    salary = st.number_input("Min Salary", value=120000, step=5000)
-    keywords = st.text_area("Keywords", "Meraki, Jamf, PowerShell, Google Workspace")
+    salary = st.number_input("Min Salary", value=90000, step=5000)
+    keywords = st.text_area("Keywords", "Meraki, Jamf, PowerShell, Google Workspace, Chromebook, LMS, PowerSchool")
     
     run_button = st.button("Start Scouting")
 
 if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
-    with st.spinner(f"Scouting {industry} for verified technical roles..."):
-        # UPDATED PROMPT: Cross-Verification Logic to stop the "EdJoin Trap"
+    with st.spinner(f"Broadening search for {role} roles in the greater Bay Area..."):
+        # UPDATED PROMPT: "OR" Logic + Geographic Radius + Verification
         prompt = (
             f"Today is {today_date}. Act as a senior recruiter specializing in {industry}. "
-            f"Search for 15-20 ACTIVE, non-expired technical job listings for '{role}' in {location}. "
-            f"Tech Stack: {keywords}. Salary floor: ${salary:,}+. "
-            "\n--- ANTI-HALLUCINATION PROTOCOL ---\n"
-            "1. VERIFICATION: You must ensure the Job Title and Company are explicitly mentioned in the search result for the link provided. "
-            "2. NO SEQUENTIAL GUESSING: Do not guess URLs by incrementing ID numbers (e.g., JobPosting/123, JobPosting/124). "
-            "3. EXPIRED LINKS: If a search snippet says 'This posting has expired' or 'Closed', skip it immediately. "
-            "4. FALLBACK: If a deep-link is not verified, provide the direct URL to the Google Search result page for that specific job. "
-            "5. EDUCATION SPECIFIC: If searching Education, ignore 'School Administrator' or 'Principal' roles. Focus on I.T. roles only. "
+            f"Search for 15-20 ACTIVE technical job listings for '{role}'. "
+            f"GEOGRAPHY: Focus on a 15-mile radius around {location}. "
+            "Specifically include nearby cities like San Leandro, Fremont, Berkeley, and Alameda. "
+            f"KEYWORDS: Treat the following as a non-mandatory wishlist. Include jobs that match ANY of these: {keywords}. "
+            f"SALARY: Focus on roles targetting ${salary:,}+. "
+            "\n--- SEARCH INTEGRITY ---\n"
+            "1. VERIFY: The job title must be technical (e.g., IT, Systems, Network, Admin). Skip Science/Special Ed teachers. "
+            "2. NO GUESSING: Provide only real links found in the snippets. "
+            "3. NO BLOGS: Skip 'Top 10' or 'Career Advice' articles. "
             "\nOutput ONLY a JSON list of objects with: title, company, salary, location, source, link."
         )
 
@@ -50,60 +51,53 @@ if run_button:
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.3 # Lowered to minimum for maximum accuracy
+                    'temperature': 0.8 # Higher temp for more variety/volume
                 }
             )
             
             if response and response.text:
                 raw_text = response.text
-                
-                # Robust extraction: Finds the first '[' and last ']'
                 match = re.search(r'\[.*\]', raw_text, re.DOTALL)
                 
                 if match:
                     json_str = match.group(0).strip()
-                    
                     try:
                         job_list = json.loads(json_str)
                         leads = pd.DataFrame(job_list)
                         leads.columns = [c.lower() for c in leads.columns]
 
-                        # POST-PROCESSING: Scrubbing for Hallucination Patterns
+                        # Post-Processing: Filtering the "noise"
                         if 'link' in leads.columns:
-                            # 1. Remove generic 'placeholder' patterns
-                            placeholders = ['a1b2c3d4', '98765', '12345', 'placeholder']
-                            leads = leads[~leads['link'].str.contains('|'.join(placeholders), case=False, na=False)]
-                            
-                            # 2. Filter out blog/advice articles
-                            noise = ['/blog/', '/resources/', '/advice/', 'top-10', '/wu-news/']
+                            noise = ['/blog/', '/resources/', '/advice/', 'top-10', '/news/']
                             leads = leads[~leads['link'].str.contains('|'.join(noise), case=False, na=False)]
+                            # Filter out those sequential EdJoin hallucinations
+                            leads = leads[~leads['link'].str.contains('a1b2c3d4|98765|12345', na=False)]
 
-                        st.success(f"Verified {len(leads)} technical leads for {today_date}!")
-                        
-                        st.data_editor(
-                            leads,
-                            column_config={
-                                "link": st.column_config.LinkColumn(
-                                    "Source Link",
-                                    display_text="View on Source",
-                                    width="medium"
-                                ),
-                            },
-                            hide_index=True,
-                            use_container_width=True,
-                            disabled=leads.columns
-                        )
-                        
-                        csv = leads.to_csv(index=False).encode('utf-8')
-                        st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
-                    except Exception as parse_error:
-                        st.error(f"Data formatting error: {parse_error}")
-                        with st.expander("Review Raw Data"):
-                            st.code(raw_text)
+                        if not leads.empty:
+                            st.success(f"Scout complete! Found {len(leads)} potential leads.")
+                            st.data_editor(
+                                leads,
+                                column_config={
+                                    "link": st.column_config.LinkColumn(
+                                        "Source Link",
+                                        display_text="View on Source",
+                                        width="medium"
+                                    ),
+                                },
+                                hide_index=True,
+                                use_container_width=True,
+                                disabled=leads.columns
+                            )
+                            csv = leads.to_csv(index=False).encode('utf-8')
+                            st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
+                        else:
+                            st.warning("No verified technical leads found. Try removing a keyword.")
+                    except Exception as e:
+                        st.error(f"Formatting error: {e}")
                 else:
-                    st.warning("No data found. Try broadening your location or reducing keywords.")
+                    st.warning("No data list isolated. The search parameters may be too restrictive.")
             else:
-                st.error("The AI returned an empty response. Please try again.")
+                st.error("Empty response from the AI. Try running the search again.")
                 
         except Exception as e:
             st.error(f"Scouting Error: {e}")
