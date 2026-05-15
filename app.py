@@ -36,7 +36,7 @@ if run_button:
     # Adjusting parameters based on the Deep Scout flag
     max_leads = 25 if deep_scout else 10
     intensity = "Perform multiple comprehensive deep-pass searches" if deep_scout else "Perform a quick, targeted search"
-    temp_setting = 0.9 if deep_scout else 0.6 # Higher variance for deep scouting
+    temp_setting = 0.2 if not deep_scout else 0.7 # Higher variance for deep scouting
 
     with st.spinner(f"Scouting the {industry} sector... Intensity: {'High' if deep_scout else 'Standard'}"):
         
