@@ -6,48 +6,56 @@ import datetime
 import re
 
 # 1. SECURE API KEY ACCESS
+# Ensure GEMINI_API_KEY is set in your Streamlit Secrets
 client = Client(api_key=st.secrets["GEMINI_API_KEY"])
 
-# 2. BRANDING
+# 2. BRANDING & UI SETUP
 st.set_page_config(page_title="Career-Paths", layout="wide")
 st.title("📡 Career-Paths")
-
-# UI Elements
-st.title("🔎 AI Job Scout")
 st.markdown("A flexible, AI-powered tool to scout the live web for your next career move.")
 
+# SIDEBAR PARAMETERS
 with st.sidebar:
     st.header("Search Parameters")
-    # Dynamically handle industry and roles for a broader user base
-    industry = st.text_input("Industry / Sector", "I.T. & Systems")
-    role = st.text_input("Job Title", "IT Systems Lead")
+    industry = st.text_input("Industry / Sector", "Education")
+    role = st.text_input("Job Title", "IT Admin")
     location = st.text_input("Location / City", "Hayward, CA")
     salary = st.number_input("Min Salary / Pay", value=90000, step=5000)
-    keywords = st.text_area("Skills / Keywords (Wishlist)", "Meraki, Jamf, PowerShell, Google Workspace")
+    keywords = st.text_area("Skills / Keywords (Wishlist)", "Meraki, Jamf, PowerShell, Google Workspace, PowerSchool, Chromebook")
+    
+    st.divider()
+    # THE BUDGET TOGGLE
+    deep_scout = st.checkbox("Deep Scout (More leads, higher API cost)", value=False)
     
     run_button = st.button("Start Scouting")
 
 if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
+    
+    # 3. COST-OPTIMIZATION LOGIC
+    # Adjusting parameters based on the Deep Scout flag
+    max_leads = 25 if deep_scout else 10
+    intensity = "Perform multiple comprehensive deep-pass searches" if deep_scout else "Perform a quick, targeted search"
+    temp_setting = 0.9 if deep_scout else 0.6 # Higher variance for deep scouting
 
-    with st.spinner(f"Scouting the web for {role} roles in {industry}..."):
-        # UPDATED PROMPT: Weighted Matching + High Volume + Agnostic Fallback
+    with st.spinner(f"Scouting the {industry} sector... Intensity: {'High' if deep_scout else 'Standard'}"):
+        
+        # 4. UNIVERSAL AGNOSTIC PROMPT
         prompt = (
-            f"Today is {today_date}. Act as a world-class career consultant. "
-            f"Your mission is to find UP TO 25 active, real job listings for '{role}' in the {industry} sector. "
-            f"\n--- GEOGRAPHIC FLEXIBILITY ---\n"
-            f"Focus on {location} and a 20-mile surrounding radius (commutable distance). "
-            "If results are low, include verified 'Remote' options for the same role. "
-            f"\n--- MATCHING LOGIC ---\n"
+            f"Today is {today_date}. Act as a senior recruiter. {intensity}. "
+            f"Find {max_leads} active job listings for '{role}' in the {industry} sector. "
+            f"\n--- GEOGRAPHIC RADIUS ---\n"
+            f"Focus on {location} and a 20-mile commuter radius (e.g., San Leandro, Fremont, Union City, Oakland, SF). "
+            "\n--- MATCHING LOGIC ---\n"
             f"1. KEYWORDS: Treat these as a priority wishlist: {keywords}. "
-            "Do NOT discard a job if it only matches some keywords. Match as many as possible. "
-            f"2. SALARY: Prioritize roles near or above ${salary:,}+. "
-            "3. RELEVANCY: Ensure the job is actually in the '{industry}' domain. "
-            "\n--- VERIFICATION & LINKS ---\n"
-            "1. Only return real job postings. Skip blog posts and 'Top 10' articles. "
-            "2. If you find a direct application link (Greenhouse, Lever, etc.), use it. "
-            "3. FALLBACK: If a direct link is missing, provide the URL of the Google Search result or the aggregator page. "
-            "4. NO HALLUCINATIONS: Do not guess or invent URLs. Use the literal URL from the search data. "
+            "Match as many as possible, but do NOT discard a job for missing some keywords. "
+            f"2. SALARY: Prioritize roles matching or exceeding ${salary:,}+. "
+            "\n--- LINK INTEGRITY & FALLBACK ---\n"
+            "1. ONLY return real job postings. Skip blog posts or career advice articles. "
+            "2. If you find a direct application link, use it. "
+            "3. FALLBACK: If a deep-link is missing or uncertain, you MUST provide the URL of the "
+            "Google Search results page or the job board page where the job is clearly visible. "
+            "4. NO HALLUCINATIONS: Do not guess IDs or URLs. No 'a1b2c3d4' placeholder links. "
             "\nOutput ONLY a JSON list of objects with: title, company, salary, location, source, link."
         )
 
@@ -57,55 +65,69 @@ if run_button:
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.9 # High variety for maximum lead discovery
+                    'temperature': temp_setting
                 }
             )
             
             if response and response.text:
                 raw_text = response.text
-                # Surgical extraction of the JSON block
+                
+                # Robust regex extraction for JSON list
                 match = re.search(r'\[.*\]', raw_text, re.DOTALL)
                 
                 if match:
                     json_str = match.group(0).strip()
-                    try:
-                        job_list = json.loads(json_str)
-                        leads = pd.DataFrame(job_list)
-                        leads.columns = [c.lower() for c in leads.columns]
+                    
+                    # Bracket balancing for clean JSON extraction
+                    bracket_level = 0
+                    for i, char in enumerate(json_str):
+                        if char == '[': bracket_level += 1
+                        elif char == ']': bracket_level -= 1
+                        if bracket_level == 0:
+                            json_str = json_str[:i+1]
+                            break
 
-                        # Post-Processing: Filtering out common article traps
+                    job_list = json.loads(json_str)
+                    leads = pd.DataFrame(job_list)
+                    leads.columns = [c.lower() for c in leads.columns]
+
+                    # 5. POST-PROCESSING FILTERS
+                    if 'link' in leads.columns:
+                        # Drop generic homepages (require at least two slashes in path)
+                        leads = leads[leads['link'].str.count('/') > 2]
+                        # Remove common placeholder/fake ID patterns
+                        leads = leads[~leads['link'].str.contains('a1b2c3d4|98765|12345', na=False)]
+                        # Strip blog/resource noise
                         noise = ['/blog/', '/resources/', '/advice/', 'top-10', '/news/']
-                        if 'link' in leads.columns:
-                            leads = leads[~leads['link'].str.contains('|'.join(noise), case=False, na=False)]
-                            # Filter out placeholder ID hallucinations
-                            leads = leads[~leads['link'].str.contains('a1b2c3d4|98765|12345', na=False)]
+                        leads = leads[~leads['link'].str.contains('|'.join(noise), case=False, na=False)]
 
-                        if not leads.empty:
-                            st.success(f"Scout complete! Found {len(leads)} potential leads.")
-                            st.data_editor(
-                                leads,
-                                column_config={
-                                    "link": st.column_config.LinkColumn(
-                                        "View Source",
-                                        display_text="View Posting",
-                                        width="medium"
-                                    ),
-                                },
-                                hide_index=True,
-                                use_container_width=True,
-                                disabled=leads.columns
-                            )
-                            # Allow friends to download their results
-                            csv = leads.to_csv(index=False).encode('utf-8')
-                            st.download_button("📥 Download My Jobs", csv, "scouted_jobs.csv", "text/csv")
-                        else:
-                            st.warning("No technical leads found. Try loosening your keywords.")
-                    except Exception as e:
-                        st.error(f"Data formatting error: {e}")
+                    if not leads.empty:
+                        st.success(f"Scout complete! Found {len(leads)} potential leads.")
+                        
+                        # Render Interactive Table
+                        st.data_editor(
+                            leads,
+                            column_config={
+                                "link": st.column_config.LinkColumn(
+                                    "Source Link",
+                                    display_text="View Posting",
+                                    width="medium"
+                                ),
+                            },
+                            hide_index=True,
+                            use_container_width=True,
+                            disabled=leads.columns
+                        )
+                        
+                        # Download Button for results
+                        csv = leads.to_csv(index=False).encode('utf-8')
+                        st.download_button("📥 Download Results", csv, f"scouted_jobs_{today_date}.csv", "text/csv")
+                    else:
+                        st.warning("No technical leads found. Try loosening your keywords or expanding location.")
                 else:
-                    st.warning("The search parameters were too narrow for the AI to format a list. Try again with fewer keywords.")
+                    st.warning("The scout couldn't isolate a formatted list. Try running the search again.")
             else:
-                st.error("Empty response from AI. The search tool might be busy—try again in 30 seconds.")
+                st.error("Empty response from the AI. The search tool may be throttled.")
                 
         except Exception as e:
             st.error(f"Scouting Error: {e}")
