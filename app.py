@@ -19,7 +19,7 @@ st.markdown("Find your next role using Gemini-powered web scouting.")
 with st.sidebar:
     st.header("Search Parameters")
     industry = st.selectbox("Industry", ["I.T. & Systems", "Education", "Healthcare", "General"])
-    role = st.text_input("Job Title", "IT Systems Lead")
+    role = st.text_input("Job Title", "IT Admin")
     location = st.text_input("Location", "Hayward, Oakland, San Francisco or Remote")
     salary = st.number_input("Min Salary", value=120000, step=5000)
     keywords = st.text_area("Keywords", "Meraki, Jamf, PowerShell, Google Workspace")
@@ -29,18 +29,17 @@ with st.sidebar:
 if run_button:
     today_date = datetime.date.today().strftime("%B %d, %Y")
 
-    with st.spinner(f"Scouting verified sources for {role} roles..."):
-        # PROMPT: Agnostic Source Fallback Logic
+    with st.spinner(f"Scouting {industry} for verified technical roles..."):
+        # UPDATED PROMPT: Added specific instruction for Education/Admin distinction
         prompt = (
-            f"Today is {today_date}. Act as a senior technical recruiter. "
+            f"Today is {today_date}. Act as a senior technical recruiter in {industry}. "
             f"Find 15-20 active job listings for '{role}' in {location}. "
-            f"Prioritize matches for: {keywords}. Target: ${salary:,}+. "
-            "\n--- THE AGNOSTIC FALLBACK PROTOCOL ---\n"
-            "1. You must provide a working URL for every job found. "
-            "2. If you find a direct application deep-link, use it. "
-            "3. FALLBACK: If a direct link is not obvious, provide the URL of the Google Search result "
-            "or the job board aggregator page (Indeed, LinkedIn, ZipRecruiter) where you saw the listing. "
-            "4. NEVER guess or synthesize a URL. No placeholder IDs. "
+            f"Requirements: {keywords}. Salary floor: ${salary:,}+. "
+            "\n--- EDUCATION SECTOR PROTOCOL ---\n"
+            "1. FOCUS: Find 'Information Technology' roles. Skip Principal or School Administrator roles. "
+            "2. SOURCE: Prioritize EdJoin, school district portals (SFUSD, OUSD, etc.), and Charter networks. "
+            "3. FALLBACK: If a deep-link is missing, provide the URL of the job search results page. "
+            "4. NO HALLUCINATIONS: Do not guess URLs. Do not create fake IDs. "
             "\nOutput ONLY a JSON list of objects with: title, company, salary, location, source, link."
         )
 
@@ -50,60 +49,60 @@ if run_button:
                 contents=prompt,
                 config={
                     'tools': [{'google_search': {}}],
-                    'temperature': 0.5 
+                    'temperature': 0.4 # Kept low for high data integrity
                 }
             )
             
-            # ARMOR: Validate that we actually got a text response
             if response and response.text:
                 raw_text = response.text
                 
-                # Surgical extraction using regex
-                match = re.search(r'\[.*\]', raw_text, re.DOTALL)
+                # SURGICAL REPAIR: Find the first [ and the last ]
+                start = raw_text.find("[")
+                end = raw_text.rfind("]") + 1
                 
-                if match:
-                    json_str = match.group(0).strip()
+                if start != -1 and end > start:
+                    json_str = raw_text[start:end].strip()
                     
-                    # Bracket-level balancing to ensure a clean list
-                    bracket_level = 0
-                    for i, char in enumerate(json_str):
-                        if char == '[': bracket_level += 1
-                        elif char == ']': bracket_level -= 1
-                        if bracket_level == 0:
-                            json_str = json_str[:i+1]
-                            break
-
-                    job_list = json.loads(json_str)
-                    leads = pd.DataFrame(job_list)
-                    leads.columns = [c.lower() for c in leads.columns]
-
-                    # Post-Processing: Strip known hallucination patterns
-                    placeholders = ['a1b2c3d4', '98765', '12345', 'placeholder']
-                    if 'link' in leads.columns:
-                        leads = leads[~leads['link'].str.contains('|'.join(placeholders), case=False, na=False)]
-
-                    st.success(f"Verified {len(leads)} active postings!")
+                    # Sanitize common JSON-breaking characters (like unescaped dollar signs)
+                    json_str = json_str.replace(r'\$', '$').replace('$', r'\$') # Standardize for parser
                     
-                    st.data_editor(
-                        leads,
-                        column_config={
-                            "link": st.column_config.LinkColumn(
-                                "Source Link",
-                                display_text="View on Source",
-                                width="medium"
-                            ),
-                        },
-                        hide_index=True,
-                        use_container_width=True,
-                        disabled=leads.columns
-                    )
-                    
-                    csv = leads.to_csv(index=False).encode('utf-8')
-                    st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
+                    try:
+                        job_list = json.loads(json_str)
+                        leads = pd.DataFrame(job_list)
+                        leads.columns = [c.lower() for c in leads.columns]
+
+                        # Post-Processing: Strip known article noise and fake IDs
+                        noise = ['/blog/', '/resources/', '/wu-news/', '/advice/', 'a1b2c3d4']
+                        if 'link' in leads.columns:
+                            leads = leads[~leads['link'].str.contains('|'.join(noise), case=False, na=False)]
+
+                        st.success(f"Verified {len(leads)} technical leads for {today_date}!")
+                        
+                        st.data_editor(
+                            leads,
+                            column_config={
+                                "link": st.column_config.LinkColumn(
+                                    "View Posting",
+                                    display_text="View on Source",
+                                    width="medium"
+                                ),
+                            },
+                            hide_index=True,
+                            use_container_width=True,
+                            disabled=leads.columns
+                        )
+                        
+                        csv = leads.to_csv(index=False).encode('utf-8')
+                        st.download_button("📥 Download CSV", csv, "jobs.csv", "text/csv")
+                    except json.JSONDecodeError:
+                        st.error("The AI returned a malformed list. Attempting to show raw data...")
+                        st.write(raw_text)
                 else:
-                    st.warning("The scout found data but it wasn't formatted correctly. Try clicking 'Start Scouting' again.")
+                    st.warning("No formatted list was detected. The AI might have returned a conversational response.")
+                    with st.expander("Review Raw AI Output"):
+                        st.write(raw_text)
             else:
-                st.error("The AI search returned an empty result. This can happen if the search tool is throttled or a safety filter is triggered.")
+                st.error("Empty response from the scout. Please try again.")
                 
         except Exception as e:
             st.error(f"Scouting Error: {e}")
